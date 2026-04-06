@@ -11,13 +11,8 @@
 
 set -uo pipefail
 
-# -- Colors --
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-BOLD='\033[1m'
-NC='\033[0m'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
 
 pass()  { echo -e "  ${GREEN}PASS${NC}  $1"; }
 fail()  { echo -e "  ${RED}FAIL${NC}  $1"; FAILURES=$((FAILURES + 1)); }
@@ -41,7 +36,7 @@ PYTHON="$VENV/bin/python"
 [ -f "$PYTHON" ] || { echo -e "${RED}ERROR: python not found at $PYTHON${NC}"; exit 1; }
 
 # -- Auto-detect vLLM package path --
-PYVER=$("$PYTHON" --version 2>&1 | grep -oP '3\.\d+')
+PYVER=$(detect_pyver "$VENV")
 VLLM_PKG="$VENV/lib/python${PYVER}/site-packages/vllm"
 
 if [ ! -d "$VLLM_PKG" ]; then
@@ -213,11 +208,12 @@ if [ -n "$MODEL_PATH" ]; then
     if [ ! -d "$MODEL_PATH" ]; then
         fail "Model path does not exist: $MODEL_PATH"
     else
-        INFER_RESULT=$("$PYTHON" -c "
+        INFER_RESULT=$(GEMMA4_MODEL_PATH="$MODEL_PATH" "$PYTHON" -c "
+import os
 from vllm import LLM, SamplingParams
 try:
     llm = LLM(
-        model='$MODEL_PATH',
+        model=os.environ['GEMMA4_MODEL_PATH'],
         trust_remote_code=True,
         enforce_eager=True,
         max_model_len=512,
