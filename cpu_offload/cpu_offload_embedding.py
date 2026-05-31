@@ -148,6 +148,21 @@ def swap_embeddings_to_cpu(model: torch.nn.Module, should_offload) -> int:
 # CPU device-context overrides vLLM's build device (the policy + forward + unit tests
 # are validated; this construction-time patch is the unvalidated piece).
 # ──────────────────────────────────────────────────────────────────────────────
+
+# ============================================================================
+# ROOT CAUSE PINNED (2026-05-31, E4B-NVFP4 + FLASH_ATTN, no JIT masking):
+# The 5.25 GiB OOM is NOT in create_weights. It is in vLLM's POST-LOAD move:
+#   vllm/model_executor/model_loader/utils.py:144  device_loading_context
+#     p.data = p.data.to(target_device)   # drags our CPU embedding back to GPU
+# called from process_weights_after_loading(). So building on CPU is necessary
+# but INSUFFICIENT — this global .to(cuda) sweep re-uploads it.
+# REMAINING FIXES (all located):
+#   1. (done) build large embedding on CPU in create_weights
+#   2. patch device_loading_context to SKIP params tagged _cpu_offload=True
+#   3. patch gemma4/gemma3n get_per_layer_input_embeddings() forward call site
+#      to gather-on-CPU -> H2D (the weight is on CPU, forward must not index on GPU)
+# Tag the param in create_weights: set_weight_attrs(weight, {"_cpu_offload": True})
+# ============================================================================
 _ORIG_CREATE_WEIGHTS = None
 LARGE_EMBED_GB = 1.0  # tables bigger than this are built on CPU
 
@@ -173,14 +188,19 @@ def register() -> None:
         est_gb = (sum(output_partition_sizes) * input_size_per_partition
                   * torch.empty(0, dtype=params_dtype).element_size()) / 1024**3
         if est_gb >= LARGE_EMBED_GB:
-            # Build the param ON CPU so the GPU is never asked for those GiB.
-            with torch.device("cpu"):
-                _ORIG_CREATE_WEIGHTS(self, layer, input_size_per_partition,
-                                     output_partition_sizes, input_size, output_size,
-                                     params_dtype, weight_loader=weight_loader, **kw)
-            if getattr(layer, "weight", None) is not None:
-                layer.weight.data = layer.weight.data.pin_memory() \
-                    if layer.weight.data.device.type == "cpu" else layer.weight.data
+            # Build the param DIRECTLY on CPU, bypassing the original (which allocates
+            # on GPU with an explicit device= a context-manager cannot override).
+            rows = sum(output_partition_sizes)
+            host = torch.empty(rows, input_size_per_partition,
+                               dtype=params_dtype, device="cpu")
+            try:
+                host = host.pin_memory()
+            except Exception:
+                pass
+            weight = torch.nn.Parameter(host, requires_grad=False)
+            set_weight_attrs(weight, {"input_dim": 1, "output_dim": 0,
+                                      "weight_loader": weight_loader})
+            layer.register_parameter("weight", weight)
             _bind_cpu_forward(layer)
         else:
             _ORIG_CREATE_WEIGHTS(self, layer, input_size_per_partition,
