@@ -1,0 +1,16 @@
+[Unit]
+Description=BiltIQ local RAG orchestrator (ingest/query) — :8205
+After=network-online.target biltiq-embed.service
+Wants=network-online.target
+Requires=biltiq-embed.service
+
+[Service]
+Type=exec
+ExecStart=/bin/bash /home/atc/Desktop/bilt-rag/launch_rag.sh
+TimeoutStartSec=120
+Restart=on-failure
+RestartSec=10
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

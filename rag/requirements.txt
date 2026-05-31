@@ -1,0 +1,12 @@
+faiss-cpu==1.14.2
+fastapi==0.136.3
+httpx==0.28.1
+huggingface_hub==1.17.0
+numpy==2.4.6
+pydantic==2.13.4
+pydantic-settings==2.14.1
+pydantic_core==2.46.4
+sentence-transformers==5.5.1
+torch==2.12.0+cpu
+transformers==5.9.0
+uvicorn==0.48.0

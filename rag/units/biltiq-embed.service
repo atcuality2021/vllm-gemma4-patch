@@ -1,0 +1,15 @@
+[Unit]
+Description=BiltIQ CPU embeddings + reranker (e5-small + bge-reranker-v2-m3) — :8204
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/bin/bash /home/atc/Desktop/bilt-rag/launch_embed.sh
+TimeoutStartSec=180
+Restart=on-failure
+RestartSec=10
+KillMode=control-group
+
+[Install]
+WantedBy=default.target
