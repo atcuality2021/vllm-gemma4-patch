@@ -2,22 +2,31 @@
 """
 BiltIQ local CPU RAG orchestrator (zero-GPU, roaming).
 
-Ties the three pieces together behind one OpenAI-ish surface:
+Implements the ATC Manthan v2.0 HYBRID retrieval pipeline with lower test models:
 
-    /rag/ingest   chunk -> embed(passage) -> FAISS
-    /rag/query    embed(query) -> FAISS top_k -> rerank -> stuff -> chat model
+    lexical (BM25)  +  dense (e5 + FAISS)  --RRF fuse-->  rerank (bge cross-enc)
+                                                          --> Self-RAG gate
+                                                          --> cited generation
+
+Spec maps (production model -> local test substitute):
+    BM25F (Postgres pg_search)   -> rank_bm25 BM25Okapi over chunk text
+    Qwen3-VL-Embedding-2B        -> intfloat/multilingual-e5-small (384-d)
+    Qwen3-VL-Reranker-2B         -> BAAI/bge-reranker-v2-m3
+    Qwen3.6-35B-A3B generation   -> Qwen3.5-4B on :8202 (GPU)
+
+Surface:
+    /rag/ingest   chunk -> embed(passage) -> FAISS + BM25
+    /rag/query    BM25 + dense -> RRF -> rerank -> self-RAG gate -> chat
     /rag/reset    drop the index
     /health
 
 Talks to:
   EMBED_BASE  (embed_server.py)  /v1/embeddings + /rerank
-  CHAT_BASE   any OpenAI chat endpoint. Default = local Qwen :8202 (best quality).
-              For a TRUE zero-GPU path set CHAT_BASE=http://localhost:8203/v1
-              (the llama.cpp CPU server).
+  CHAT_BASE   any OpenAI chat endpoint. Default = local Qwen :8202.
 
-Vector store: faiss IndexFlatIP over L2-normalized e5 vectors == cosine. Small,
-exact, no training. Persists to $BILT_RAG_DATA (index + chunks.jsonl) so ingest
-survives restarts.
+Stores: faiss IndexFlatIP over L2-normalized e5 vectors (== cosine) + an
+in-process BM25 over the same chunk text. Both rebuild from chunks.jsonl on
+startup, so persistence is just the FAISS index + the jsonl.
 """
 from __future__ import annotations
 
@@ -26,11 +35,14 @@ import os
 from pathlib import Path
 from typing import List, Optional
 
+import re
+
 import faiss
 import httpx
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from rank_bm25 import BM25Okapi
 
 # --- config -----------------------------------------------------------------
 EMBED_BASE = os.environ.get("BILT_EMBED_BASE", "http://localhost:8204")
@@ -40,6 +52,14 @@ DATA_DIR = Path(os.environ.get("BILT_RAG_DATA", "/home/atc/Desktop/bilt-rag/data
 EMBED_DIM = int(os.environ.get("BILT_EMBED_DIM", "384"))  # e5-small = 384
 DEFAULT_CHUNK_CHARS = int(os.environ.get("BILT_CHUNK_CHARS", "900"))
 DEFAULT_CHUNK_OVERLAP = int(os.environ.get("BILT_CHUNK_OVERLAP", "150"))
+
+# Hybrid retrieval knobs (spec defaults: RRF k=60, top-40 per leg, rerank top-8).
+RRF_K = int(os.environ.get("BILT_RRF_K", "60"))
+LEG_TOPK = int(os.environ.get("BILT_LEG_TOPK", "40"))      # candidates per leg
+RERANK_TOP_N = int(os.environ.get("BILT_RERANK_TOP_N", "8"))
+# Self-RAG gate: if the top rerank score (bge sigmoid, 0..1) is below this, the
+# context is judged too weak -> refuse instead of hallucinating. 0 disables it.
+SELFRAG_MIN = float(os.environ.get("BILT_SELFRAG_MIN", "0.10"))
 
 
 def _read_key() -> str:
@@ -57,6 +77,20 @@ _CHUNKS_PATH = DATA_DIR / "chunks.jsonl"
 
 _index: faiss.Index
 _chunks: List[dict] = []  # parallel to index rows: {text, source, doc_id}
+_bm25: Optional[BM25Okapi] = None  # lexical leg, rebuilt from _chunks
+
+
+def _tok(text: str) -> List[str]:
+    """Unicode word tokens (lowercased). Python \\w matches Devanagari, so this
+    tokenizes Hindi/Hinglish alongside English for the BM25 lexical leg."""
+    return re.findall(r"\w+", text.lower(), flags=re.UNICODE)
+
+
+def _build_bm25() -> None:
+    """(Re)build the BM25 index over the full corpus. rank_bm25 has no cheap
+    incremental add, so we rebuild on ingest — fine at laptop corpus sizes."""
+    global _bm25
+    _bm25 = BM25Okapi([_tok(c["text"]) for c in _chunks]) if _chunks else None
 
 
 def _load_store() -> None:
@@ -67,6 +101,7 @@ def _load_store() -> None:
     else:
         _index = faiss.IndexFlatIP(EMBED_DIM)
         _chunks = []
+    _build_bm25()
 
 
 def _persist() -> None:
@@ -135,6 +170,35 @@ def _rerank(query: str, docs: List[str], top_n: int) -> List[dict]:
     return r.json()["results"]
 
 
+# --- hybrid retrieval: dense + lexical, fused with RRF ----------------------
+def _dense_search(qvec: np.ndarray, k: int) -> List[int]:
+    if not _chunks:
+        return []
+    _, idx = _index.search(qvec, min(k, len(_chunks)))
+    return [int(i) for i in idx[0] if i >= 0]
+
+
+def _lexical_search(query: str, k: int) -> List[int]:
+    if _bm25 is None:
+        return []
+    scores = _bm25.get_scores(_tok(query))
+    order = np.argsort(scores)[::-1][:k]
+    # drop chunks with no lexical overlap at all (score 0) — they're noise
+    return [int(i) for i in order if scores[i] > 0]
+
+
+def _rrf(rankings: List[List[int]], k: int, pool: int) -> List[int]:
+    """Reciprocal Rank Fusion: score(d) = sum 1/(k + rank_in_leg). Rank-based,
+    so it merges legs whose scores live on totally different scales (BM25 vs
+    cosine) without normalization — that's why hybrid search uses it."""
+    fused: dict = {}
+    for ranking in rankings:
+        for rank, idx in enumerate(ranking):
+            fused[idx] = fused.get(idx, 0.0) + 1.0 / (k + rank + 1)
+    ordered = sorted(fused.items(), key=lambda x: x[1], reverse=True)
+    return [idx for idx, _ in ordered[:pool]]
+
+
 def _chat(messages: List[dict], max_tokens: int) -> str:
     headers = {"Authorization": f"Bearer {CHAT_KEY}"} if CHAT_KEY else {}
     r = _http.post(
@@ -186,6 +250,7 @@ def ingest(req: IngestRequest):
     vecs = _embed(new_texts, "passage")
     _index.add(vecs)
     _chunks.extend(new_meta)
+    _build_bm25()  # lexical leg must see the new chunks
     _persist()
     return {"ingested_documents": len(req.documents), "ingested_chunks": len(new_texts),
             "total_chunks": len(_chunks)}
@@ -193,46 +258,75 @@ def ingest(req: IngestRequest):
 
 class QueryRequest(BaseModel):
     query: str
-    top_k: int = Field(default=20, description="candidates pulled from FAISS")
-    rerank_top_n: int = Field(default=5, description="kept after reranking")
+    leg_topk: int = Field(default=LEG_TOPK, description="candidates pulled per leg")
+    rerank_top_n: int = Field(default=RERANK_TOP_N, description="kept after reranking")
+    mode: str = Field(default="hybrid", description="hybrid | dense | lexical")
+    selfrag_min: float = Field(default=SELFRAG_MIN, description="0 disables the gate")
     generate: bool = True
     max_tokens: int = 512
+
+
+REFUSAL = ("I don't have enough relevant information in the indexed documents to "
+           "answer that confidently.")
 
 
 @app.post("/rag/query")
 def query(req: QueryRequest):
     if not _chunks:
         raise HTTPException(400, "index is empty — ingest documents first")
-    qv = _embed([req.query], "query")
-    k = min(req.top_k, len(_chunks))
-    scores, idx = _index.search(qv, k)
-    cand = [_chunks[i] for i in idx[0] if i >= 0]
-    reranked = _rerank(req.query, [c["text"] for c in cand], req.rerank_top_n)
-    hits = [{**cand[r["index"]], "relevance_score": r["relevance_score"]} for r in reranked]
 
-    result = {"query": req.query, "sources": hits}
+    # --- two retrieval legs, fused with RRF (the Manthan v2.0 hybrid pipeline) ---
+    qv = _embed([req.query], "query")
+    dense = _dense_search(qv, req.leg_topk) if req.mode in ("hybrid", "dense") else []
+    lexical = _lexical_search(req.query, req.leg_topk) if req.mode in ("hybrid", "lexical") else []
+    if req.mode == "hybrid":
+        cand_idx = _rrf([dense, lexical], k=RRF_K, pool=req.leg_topk * 2)
+    else:
+        cand_idx = dense or lexical
+    if not cand_idx:
+        return {"query": req.query, "sources": [], "gated": True,
+                "retrieval": {"dense": len(dense), "lexical": len(lexical)},
+                **({"answer": REFUSAL} if req.generate else {})}
+
+    # --- cross-encoder rerank the fused pool -> top-n ---
+    reranked = _rerank(req.query, [_chunks[i]["text"] for i in cand_idx], req.rerank_top_n)
+    hits = [{**_chunks[cand_idx[r["index"]]], "relevance_score": r["relevance_score"]}
+            for r in reranked]
+
+    # --- Self-RAG gate: weak top score -> refuse instead of hallucinate ---
+    top_score = hits[0]["relevance_score"] if hits else 0.0
+    gated = req.selfrag_min > 0 and top_score < req.selfrag_min
+
+    result = {"query": req.query, "sources": hits, "gated": gated,
+              "retrieval": {"dense": len(dense), "lexical": len(lexical),
+                            "fused": len(cand_idx), "top_score": top_score}}
     if req.generate:
-        context = "\n\n".join(f"[{i+1}] {h['text']}" for i, h in enumerate(hits))
-        messages = [
-            {"role": "system", "content":
-             "Answer the question using ONLY the numbered context. Cite sources as "
-             "[n]. If the context does not contain the answer, say you don't know."},
-            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {req.query}"},
-        ]
-        result["answer"] = _chat(messages, req.max_tokens)
+        if gated:
+            result["answer"] = REFUSAL
+        else:
+            context = "\n\n".join(f"[{i+1}] {h['text']}" for i, h in enumerate(hits))
+            messages = [
+                {"role": "system", "content":
+                 "Answer the question using ONLY the numbered context. Cite sources as "
+                 "[n]. If the context does not contain the answer, say you don't know."},
+                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {req.query}"},
+            ]
+            result["answer"] = _chat(messages, req.max_tokens)
     return result
 
 
 @app.post("/rag/reset")
 def reset():
-    global _index, _chunks
+    global _index, _chunks, _bm25
     _index = faiss.IndexFlatIP(EMBED_DIM)
     _chunks = []
+    _bm25 = None
     _persist()
     return {"status": "reset", "total_chunks": 0}
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "chunks": len(_chunks),
+    return {"status": "ok", "chunks": len(_chunks), "bm25": _bm25 is not None,
+            "mode": "hybrid (bm25+dense+rrf+rerank+selfrag)",
             "embed_base": EMBED_BASE, "chat_base": CHAT_BASE}
