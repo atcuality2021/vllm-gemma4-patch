@@ -22,4 +22,5 @@ exec /home/atc/Desktop/vllm-env/bin/vllm serve /home/atc/hf_models/Qwen3.5-4B-AW
   --gpu-memory-utilization 0.92 --max-model-len 4096 \
   --max-num-seqs 1 --enforce-eager --trust-remote-code \
   --default-chat-template-kwargs '{"enable_thinking": false}' \
+  --enable-auto-tool-choice --tool-call-parser qwen3_xml \
   "${KEY_ARG[@]}"

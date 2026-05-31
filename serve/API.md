@@ -31,6 +31,31 @@ cat ~/.config/biltiq_vllm_api_key
   (`~5.12x` KV ratio; the linear-attention layers carry no KV cache). W4A16 base
   keeps numerics clean — primes/arithmetic come out correct.
 - Greedy/eager, `--max-num-seqs 1` (single-stream, laptop-sized).
+- **Tool calling enabled** — `--enable-auto-tool-choice --tool-call-parser qwen3_xml`.
+  The model's chat template emits the XML form
+  (`<tool_call><function=name><parameter=p>…</parameter></function></tool_call>`),
+  so `qwen3_xml` is the matching parser — **not** `hermes` (which expects JSON
+  inside the tags and would silently parse zero tool calls). W4A16 keeps argument
+  values exact, so tool args don't suffer the numeric corruption E4B's W4A4 had.
+
+## Tool calling (curl)
+
+```bash
+KEY=$(cat ~/.config/biltiq_vllm_api_key)
+curl -s http://localhost:8202/v1/chat/completions \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $KEY" \
+  -d '{
+    "model": "qwen3.5-4b",
+    "messages": [{"role":"user","content":"Weather in Mumbai in celsius? Call the tool."}],
+    "tools": [{"type":"function","function":{
+      "name":"get_weather",
+      "parameters":{"type":"object",
+        "properties":{"city":{"type":"string"},"unit":{"type":"string"}},
+        "required":["city"]}}}],
+    "tool_choice": "auto"
+  }'
+# -> finish_reason "tool_calls", arguments {"city":"Mumbai","unit":"celsius"}
+```
 
 ## Quick start (curl)
 
