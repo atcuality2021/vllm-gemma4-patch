@@ -11,6 +11,12 @@
 | `google/gemma-4-4B-it` | 4B | Instruction-tuned | Text | [Link](https://huggingface.co/google/gemma-4-4B-it) |
 | `google/gemma-4-4B-pt` | 4B | Pretrained | Text | [Link](https://huggingface.co/google/gemma-4-4B-pt) |
 | `google/gemma-4-1B-it` | 1B | Instruction-tuned | Text | [Link](https://huggingface.co/google/gemma-4-1B-it) |
+| `google/gemma-4-E2B-it` | 2.3B eff / 5.1B | Instruction-tuned (E-series, PLE) | Text + Image + Audio | [Link](https://huggingface.co/google/gemma-4-E2B-it) |
+| `google/gemma-4-E4B-it` | 4.5B eff / 8B | Instruction-tuned (E-series, PLE) | Text + Image + Audio | [Link](https://huggingface.co/google/gemma-4-E4B-it) |
+| `google/gemma-4-E2B-it-assistant` | 2.3B eff | MTP draft (speculative decoding) | — | [Link](https://huggingface.co/google/gemma-4-E2B-it-assistant) |
+| `google/gemma-4-E4B-it-assistant` | 4.5B eff | MTP draft (speculative decoding) | — | [Link](https://huggingface.co/google/gemma-4-E4B-it-assistant) |
+
+> **E-series note:** despite the "Effective parameter" (PLE) naming, E2B/E4B declare `architectures: ["Gemma4ForConditionalGeneration"]` — the *same* native class as the dense models. They need **no special patch** on vLLM ≥ 0.19.0. Audio input requires `pip install vllm[audio]`. The `-it-assistant` checkpoints are Multi-Token-Prediction draft models for ~3× speculative decoding, not standalone models.
 
 ## Recommended launch configurations
 
@@ -149,6 +155,37 @@ vllm serve google/gemma-4-1B-it \
   --max-num-seqs 128 \
   --enable-prefix-caching
 ```
+
+---
+
+### gemma-4-E4B-it / E2B-it (E-series, multimodal)
+
+**8 GB laptop GPU (e.g. RTX 5060) — E4B, the largest E-series that fits**
+
+```bash
+vllm serve google/gemma-4-E4B-it \
+  --trust-remote-code \
+  --gpu-memory-utilization 0.90 \
+  --max-model-len 16384 \
+  --max-num-seqs 4
+```
+
+- Multimodal in (text + image + audio, ≤30s audio), text out
+- For audio input: `pip install vllm[audio]` first
+- Keep `--max-num-seqs` low (2–4) and context modest — 8 GB KV is the limiter, not compute
+- E2B-it is lighter still (2.3B eff) if you want more concurrency / video headroom
+
+**With speculative decoding (~3× decode via the MTP draft model)**
+
+```bash
+vllm serve google/gemma-4-E4B-it \
+  --trust-remote-code \
+  --gpu-memory-utilization 0.90 \
+  --max-model-len 16384 --max-num-seqs 4 \
+  --speculative-config '{"model": "google/gemma-4-E4B-it-assistant", "num_speculative_tokens": 3}'
+```
+
+- The drafter adds ~1.5 GB resident — only enable once the base model fits comfortably
 
 ---
 

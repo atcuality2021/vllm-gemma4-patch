@@ -1,8 +1,16 @@
 #!/bin/bash
 # =============================================================================
-# vLLM Gemma 4 Patch — Backport PR #38826 to vLLM 0.18.x
+# vLLM Gemma 4 Patch — PR #38826 (native >= 0.19.0, backport for 0.18.x)
 # =============================================================================
-# Patches any vLLM 0.18.x installation to support Google Gemma 4 models.
+# Gemma 4 support (PR #38826) merged to vLLM main on 2026-04-02 and first
+# shipped in v0.19.0 (2026-04-03). It is native in every release since, through
+# the latest tested v0.22.0 — covering the full family: dense 1B/4B/12B/31B and
+# the E-series E2B/E4B (all Gemma4ForConditionalGeneration).
+#
+#   - vLLM >= 0.19.0 : native. This script verifies the model registers, no edits.
+#   - vLLM  0.18.x   : legacy backport — copies the gemma4 files from main and
+#                      fixes import paths (the original purpose of this repo).
+#
 # Works on x86_64 and aarch64 (ARM/GB10).
 #
 # Usage:
@@ -70,7 +78,8 @@ trap cleanup_temp EXIT
 usage() {
     echo "Usage: $0 <venv-path>"
     echo ""
-    echo "  venv-path    Path to the Python virtualenv containing vLLM 0.18.x"
+    echo "  venv-path    Path to the Python virtualenv containing vLLM"
+    echo "               (>= 0.19.0 = native verify; 0.18.x = legacy backport)"
     echo ""
     echo "Examples:"
     echo "  $0 ~/vllm-env"
@@ -123,10 +132,46 @@ fi
 
 # -- Get vLLM version --
 VLLM_VER=$("$PIP" show vllm 2>/dev/null | grep "^Version:" | awk '{print $2}')
+VLLM_BASE="${VLLM_VER%%[^0-9.]*}"   # strip rc/dev/+local suffixes -> e.g. 0.22.0
 
-# -- Verify 0.18.x --
+# version_lt A B  -> exit 0 (true) when A < B, comparing dotted semver
+version_lt() {
+    [ "$1" = "$2" ] && return 1
+    [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]
+}
+
+# -- Native fast-path: Gemma 4 ships in vLLM >= 0.19.0 --
+if [ -n "$VLLM_BASE" ] && ! version_lt "$VLLM_BASE" "0.19.0"; then
+    echo ""
+    echo -e "${BOLD}=============================================${NC}"
+    echo -e "  vLLM version: ${BLUE}${VLLM_VER}${NC}  ${GREEN}(Gemma 4 is native)${NC}"
+    echo -e "  Python:       ${BLUE}${PYVER}${NC}"
+    echo -e "  Platform:     ${BLUE}$(uname -m)${NC}"
+    echo -e "${BOLD}=============================================${NC}"
+    info "Gemma 4 (PR #38826) is built in since v0.19.0 — nothing to backport."
+    info "Verifying the model registers in this install..."
+
+    if "$PYTHON" -c "from vllm.model_executor.models.gemma4 import Gemma4ForCausalLM" 2>/dev/null \
+       && "$PYTHON" -c "from vllm.model_executor.models.gemma4_mm import Gemma4ForConditionalGeneration" 2>/dev/null; then
+        log "gemma4 + gemma4_mm import OK (dense 1B/4B/12B/31B and E-series E2B/E4B supported)."
+        echo ""
+        echo -e "  ${BOLD}Launch (E4B, ~8 GB GPU, multimodal):${NC}"
+        echo -e "    vllm serve google/gemma-4-E4B-it \\"
+        echo -e "      --trust-remote-code --gpu-memory-utilization 0.90 \\"
+        echo -e "      --max-model-len 16384 --max-num-seqs 4"
+        echo ""
+        echo -e "  See SUPPORTED_MODELS.md for per-size configs."
+        exit 0
+    else
+        warn "Native gemma4 module did not import on ${VLLM_VER}."
+        warn "Upgrade transformers (pip install -U transformers) and retry, or open an issue."
+        exit 1
+    fi
+fi
+
+# -- Legacy backport path: vLLM < 0.19.0 (expected 0.18.x) --
 if [[ ! "$VLLM_VER" =~ ^0\.18\. ]]; then
-    warn "vLLM version is $VLLM_VER (expected 0.18.x). Patch may not apply cleanly."
+    warn "vLLM version is $VLLM_VER (legacy backport targets 0.18.x). Patch may not apply cleanly."
     read -rp "Continue anyway? [y/N] " confirm
     if [[ ! "$confirm" =~ ^[yY]$ ]]; then
         echo "Aborted."

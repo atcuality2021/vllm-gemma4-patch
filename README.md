@@ -1,12 +1,21 @@
 # vllm-gemma4-patch
 
-**Gemma 4 support patch for vLLM 0.18.x** -- backports [PR #38826](https://github.com/vllm-project/vllm/pull/38826) from vLLM main.
+**Gemma 4 support for vLLM** — native in **vLLM ≥ 0.19.0**; legacy backport of [PR #38826](https://github.com/vllm-project/vllm/pull/38826) for vLLM 0.18.x.
 
-## Why this exists
+## Status (updated 2026-05-31)
 
-Google released the Gemma 4 model family on April 2, 2026. The vLLM project merged native Gemma 4 support in [PR #38826](https://github.com/vllm-project/vllm/pull/38826) to their `main` branch, but it is **not included in any stable release** as of this writing (latest stable: v0.18.1, March 31 2026).
+Gemma 4 support ([PR #38826](https://github.com/vllm-project/vllm/pull/38826)) **merged to vLLM `main` on 2026-04-02** and first shipped in **v0.19.0 (2026-04-03)**. It is built in to every release since — verified against the latest stable **v0.22.0 (2026-05-29)**.
 
-This patch backports full Gemma 4 support to stock vLLM 0.18.x on **any platform** (x86_64 and aarch64/ARM).
+| Your vLLM | What this repo does |
+|-----------|---------------------|
+| **≥ 0.19.0** (recommended) | Gemma 4 is **native** — no patching. `patch.sh` detects this, verifies the model registers, and exits. Just `pip install -U vllm`. |
+| **0.18.x** (legacy) | Runs the original backport: copies the gemma4 files from `main` and fixes import paths. Documented below. |
+
+The whole Gemma 4 family routes through `Gemma4ForConditionalGeneration` / `Gemma4ForCausalLM`, including the **E-series (E2B/E4B)** — so no separate handling is needed for the PLE/"effective-parameter" variants.
+
+## Why this still exists
+
+The repo began (April 2026) as a backport because PR #38826 was only on `main`. That job is done upstream now, so the script's primary mode is a **version-aware verifier** for native installs, with the backport kept for anyone pinned to 0.18.x.
 
 ## Supported models
 
@@ -19,6 +28,12 @@ This patch backports full Gemma 4 support to stock vLLM 0.18.x on **any platform
 | `google/gemma-4-4B-it` | 4B | Instruction-tuned |
 | `google/gemma-4-4B-pt` | 4B | Pretrained |
 | `google/gemma-4-1B-it` | 1B | Instruction-tuned |
+| `google/gemma-4-E4B-it` | 4.5B eff / 8B | Instruction-tuned, multimodal (E-series, PLE) |
+| `google/gemma-4-E2B-it` | 2.3B eff / 5.1B | Instruction-tuned, multimodal (E-series, PLE) |
+| `google/gemma-4-E4B-it-assistant` | 4.5B eff | MTP draft model for speculative decoding (`Gemma4MTPModel`) |
+| `google/gemma-4-E2B-it-assistant` | 2.3B eff | MTP draft model for speculative decoding |
+
+The **E-series** (E2B/E4B) declares `architectures: ["Gemma4ForConditionalGeneration"]`, so it loads on the same native code path as the dense models — no special patch. The `-it-assistant` MTP drafters are served via vLLM speculative decoding (`Gemma4MTPModel`, native ≥ 0.19.0).
 
 See [SUPPORTED_MODELS.md](SUPPORTED_MODELS.md) for recommended launch configurations per model size.
 
@@ -29,12 +44,28 @@ See [SUPPORTED_MODELS.md](SUPPORTED_MODELS.md) for recommended launch configurat
 
 ## Prerequisites
 
-- **vLLM 0.18.x** installed in a Python virtualenv
-- **Internet access** (to clone vLLM main and install transformers from GitHub)
-- **Git** installed
-- **pip** available in the target virtualenv
+- **vLLM** in a Python virtualenv — **≥ 0.19.0 recommended** (native), or 0.18.x for the legacy backport
+- **Git** and **pip** available in the target virtualenv
+- **Internet access** — only needed for the 0.18.x backport (clones vLLM `main`)
 
-## Quick start
+## Quick start — vLLM ≥ 0.19.0 (recommended)
+
+Gemma 4 is native; nothing to patch. Just make sure you're current and verify:
+
+```bash
+pip install -U vllm                 # 0.22.0+ has full Gemma 4 family
+./patch.sh /path/to/your/vllm-venv  # detects native support, verifies, exits 0
+```
+
+Then serve any Gemma 4 model directly, e.g. the E4B multimodal on an 8 GB GPU:
+
+```bash
+vllm serve google/gemma-4-E4B-it \
+  --trust-remote-code --gpu-memory-utilization 0.90 \
+  --max-model-len 16384 --max-num-seqs 4
+```
+
+## Legacy backport — vLLM 0.18.x only
 
 ```bash
 git clone https://github.com/ATC-Labs/vllm-gemma4-patch.git
@@ -54,9 +85,11 @@ One-liner if you already know your venv path:
 git clone https://github.com/ATC-Labs/vllm-gemma4-patch.git && cd vllm-gemma4-patch && ./patch.sh ~/vllm-env
 ```
 
-## What the patch does
+## What the legacy backport does (vLLM 0.18.x)
 
-The script performs 6 steps, each idempotent (safe to re-run):
+> Only runs when the detected vLLM is < 0.19.0. On ≥ 0.19.0 the script skips all of this and just verifies native support.
+
+The backport performs 6 steps, each idempotent (safe to re-run):
 
 ### Step 1: Upgrade transformers
 
@@ -199,6 +232,18 @@ vllm serve google/gemma-4-4B-it \
   --max-num-seqs 32
 ```
 
+### gemma-4-E4B-it on an 8GB laptop GPU (RTX 5060, multimodal)
+
+```bash
+# E-series multimodal (text + image + audio in, text out). Native on vLLM >= 0.19.0.
+vllm serve google/gemma-4-E4B-it \
+  --trust-remote-code \
+  --gpu-memory-utilization 0.90 --max-model-len 16384 \
+  --max-num-seqs 4
+# Optional ~3x decode via the MTP draft model (speculative decoding):
+#   --speculative-config '{"model": "google/gemma-4-E4B-it-assistant", "num_speculative_tokens": 3}'
+```
+
 ## Benchmark results
 
 ### GB10 (DGX Spark, 128GB unified memory, aarch64)
@@ -216,11 +261,12 @@ vllm serve google/gemma-4-4B-it \
 
 ## Known limitations
 
-- **Requires transformers from GitHub main**: The `gemma4` model type is not in any stable transformers release. Once a new transformers version ships with Gemma 4 support, you can switch back to a stable release.
-- **No audio support**: Gemma 4 config declares `audio_config: null`. Audio modality is not implemented.
-- **vLLM version locked to 0.18.x**: This patch targets the 0.18.x codebase. When vLLM 0.19 or later ships with native Gemma 4 support, this patch will no longer be needed.
+These apply to the **legacy 0.18.x backport** only; native installs (≥ 0.19.0) are unaffected:
+
+- **Requires transformers from GitHub main**: On 0.18.x the `gemma4` model type was not in any stable transformers release. On vLLM ≥ 0.19.0 a compatible transformers ships as a normal dependency.
+- **Audio**: The dense Gemma 4 config declares `audio_config: null` (dense models don't process audio). The E-series (E2B/E4B) *does* accept audio input — install `vllm[audio]` to enable it.
 - **Sliding window attention**: On some platforms, sliding window + prefix caching interactions may require `--enforce-eager` for stability.
-- **Shallow clone required**: The patch clones vLLM main at HEAD. If the Gemma 4 files are reorganized upstream, the copy paths may need updating.
+- **Shallow clone required (backport path)**: The 0.18.x path clones vLLM main at HEAD. If the Gemma 4 files are reorganized upstream, the copy paths may need updating. The native path has no such dependency.
 
 ## Upstream references
 
