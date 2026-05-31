@@ -164,7 +164,18 @@ def swap_embeddings_to_cpu(model: torch.nn.Module, should_offload) -> int:
 # Tag the param in create_weights: set_weight_attrs(weight, {"_cpu_offload": True})
 # ============================================================================
 _ORIG_CREATE_WEIGHTS = None
-LARGE_EMBED_GB = 1.0  # tables bigger than this are built on CPU
+# Tables bigger than this are built on CPU. Set to 2.0 GB so it cleanly separates
+# Gemma-4 E4B's two embedding tables by size (the patch sees bytes, not names):
+#   * embed_tokens          = 1.25 GB (262144 x 2560)  -> STAYS ON GPU
+#   * embed_tokens_per_layer = 5.25 GB (262144 x 10752) -> OFFLOADED (the win)
+# Keeping the 1.25 GB main table GPU-resident matters for two reasons:
+#   1. It is gathered EVERY step (hottest path) — CPU offload would add a per-step H2D.
+#   2. gemma4_mm.py:998 allocates the persistent `per_layer_embeddings` buffer on
+#      `embed_tokens.weight.device`. If embed_tokens were on CPU, that buffer lands on
+#      CPU and the forward add at gemma4.py:887 hits a cuda-vs-cpu device mismatch.
+#      Keeping embed_tokens on GPU makes the buffer GPU-resident for free.
+# On 8 GB this costs ~1.25 GB of VRAM we have to spare (model loads in ~4.5 GiB).
+LARGE_EMBED_GB = 2.0
 
 
 def register() -> None:
