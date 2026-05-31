@@ -13,7 +13,7 @@ export VLLM_USE_FLASHINFER_SAMPLER=0
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN           # prefer FlashAttention (our hook covers it)
 export HF_HUB_OFFLINE=1
 PORT=${PORT:-8202}
-HOST=${HOST:-0.0.0.0}                              # bind all interfaces for LAN/roaming access
+HOST=${HOST:-127.0.0.1}                            # localhost only (same-laptop app); set HOST=0.0.0.0 for LAN
 # API key: from $VLLM_API_KEY, else ~/.config/biltiq_vllm_api_key if present
 API_KEY=${VLLM_API_KEY:-$(cat /home/atc/.config/biltiq_vllm_api_key 2>/dev/null || true)}
 KEY_ARG=(); [ -n "$API_KEY" ] && KEY_ARG=(--api-key "$API_KEY")
