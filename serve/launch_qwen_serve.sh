@@ -20,4 +20,6 @@ KEY_ARG=(); [ -n "$API_KEY" ] && KEY_ARG=(--api-key "$API_KEY")
 exec /home/atc/Desktop/vllm-env/bin/vllm serve /home/atc/hf_models/Qwen3.5-4B-AWQ-4bit \
   --host "$HOST" --port "$PORT" --served-model-name qwen3.5-4b \
   --gpu-memory-utilization 0.92 --max-model-len 4096 \
-  --max-num-seqs 1 --enforce-eager --trust-remote-code "${KEY_ARG[@]}"
+  --max-num-seqs 1 --enforce-eager --trust-remote-code \
+  --default-chat-template-kwargs '{"enable_thinking": false}' \
+  "${KEY_ARG[@]}"
