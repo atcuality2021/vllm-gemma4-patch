@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BiltIQ Laptop API — Roaming Reference</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#11161f; --panel2:#0e131b; --border:#1f2733;
+    --text:#e6edf3; --muted:#8b97a7; --accent:#5db0ff; --accent2:#7ee787;
+    --warn:#f0b860; --code-bg:#0a0d13; --radius:10px; --max:980px;
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);
+    color:var(--text);line-height:1.6;font-size:15px;padding:2.5rem 1rem}
+  main{max-width:var(--max);margin:0 auto}
+  header.top{border-bottom:1px solid var(--border);padding-bottom:1.5rem;margin-bottom:2rem}
+  .brand{font-size:.78rem;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);font-weight:700}
+  header.top h1{font-size:1.8rem;margin:.4rem 0 .3rem}
+  header.top p{color:var(--muted);max-width:70ch}
+  .pill{display:inline-block;font-size:.72rem;padding:.15rem .55rem;border-radius:999px;
+    border:1px solid var(--border);background:var(--panel);color:var(--muted);margin-right:.4rem}
+  .pill.on{color:var(--accent2);border-color:#1f3b29}
+  section{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+    padding:1.4rem 1.5rem;margin-bottom:1.5rem}
+  h2{font-size:1.18rem;margin-bottom:.4rem;display:flex;align-items:center;gap:.6rem}
+  h2 .port{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem;color:var(--accent);
+    background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:.05rem .5rem}
+  h3{font-size:.98rem;margin:1.1rem 0 .4rem;color:var(--text)}
+  p,li{color:var(--text)}.muted{color:var(--muted)}
+  ul{margin:.3rem 0 .3rem 1.2rem}li{margin:.15rem 0}
+  table{width:100%;border-collapse:collapse;font-size:.86rem;margin:.6rem 0}
+  th,td{text-align:left;padding:.5rem .7rem;border:1px solid var(--border);vertical-align:top}
+  th{background:var(--panel2);color:var(--muted);font-weight:600}
+  code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em;
+    background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:.05rem .35rem}
+  pre{position:relative;background:var(--code-bg);border:1px solid var(--border);border-radius:8px;
+    padding:.9rem 1rem;overflow-x:auto;margin:.5rem 0;font-size:.83rem}
+  pre code{background:none;border:none;padding:0;color:#cdd9e5;white-space:pre}
+  .tok-c{color:var(--accent)}.tok-s{color:var(--accent2)}.tok-k{color:var(--warn)}
+  .copy{position:absolute;top:.5rem;right:.5rem;font-size:.7rem;color:var(--muted);
+    background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:.15rem .5rem;cursor:pointer}
+  .copy:hover{color:var(--text)}
+  .note{border-left:3px solid var(--accent);background:var(--panel2);padding:.6rem .9rem;
+    border-radius:0 8px 8px 0;margin:.7rem 0;font-size:.9rem;color:var(--muted)}
+  .note.warn{border-color:var(--warn)}
+  a{color:var(--accent)}
+  footer{color:var(--muted);font-size:.8rem;text-align:center;padding:1.5rem 0;border-top:1px solid var(--border)}
+  nav.toc{font-size:.85rem;margin:.4rem 0 0}
+  nav.toc a{margin-right:1rem;white-space:nowrap}
+</style>
+</head>
+<body>
+<main>
+<header class="top">
+  <div class="brand">BiltIQ AI · Laptop Inference</div>
+  <h1>Laptop API — Roaming Reference</h1>
+  <p>The local inference + RAG surface on this laptop (8&nbsp;GB RTX&nbsp;5060). Use these
+  when <strong>roaming</strong> — when prod (<code>omni.atcuality.com</code> /
+  <code>192.168.29.140</code>) is unreachable and you need chat, tools, embeddings,
+  reranking, or RAG fully offline.</p>
+  <nav class="toc">
+    <a href="#map">Service map</a><a href="#switch">Roaming switchover</a>
+    <a href="#qwen">Qwen :8202</a><a href="#embed">Embed :8204</a>
+    <a href="#rag">RAG :8205</a><a href="#manage">Manage</a>
+  </nav>
+</header>
+
+<section id="map">
+  <h2>Service map</h2>
+  <p class="muted">All bind <code>127.0.0.1</code> (same-laptop only) and run as
+  <code>systemd&nbsp;--user</code> services that auto-start on login.</p>
+  <table>
+    <thead><tr><th>Service</th><th>Port</th><th>Endpoints</th><th>Auth</th><th>Engine</th></tr></thead>
+    <tbody>
+      <tr><td><code>biltiq-qwen</code> <span class="pill on">enabled</span></td><td><code>:8202</code></td>
+        <td><code>/v1/chat/completions</code> (+tools), <code>/v1/models</code>, <code>/health</code></td>
+        <td>Bearer</td><td>Qwen3.5-4B (GPU)</td></tr>
+      <tr><td><code>biltiq-embed</code> <span class="pill on">enabled</span></td><td><code>:8204</code></td>
+        <td><code>/v1/embeddings</code>, <code>/rerank</code>, <code>/health</code></td>
+        <td>none</td><td>e5-small + bge-reranker (CPU)</td></tr>
+      <tr><td><code>biltiq-rag</code> <span class="pill on">enabled</span></td><td><code>:8205</code></td>
+        <td><code>/rag/ingest</code>, <code>/rag/query</code>, <code>/rag/reset</code>, <code>/health</code></td>
+        <td>none</td><td>hybrid RAG (CPU + Qwen)</td></tr>
+    </tbody>
+  </table>
+  <div class="note warn"><strong>API key</strong> (for <code>:8202</code> only) lives at
+  <code>~/.config/biltiq_vllm_api_key</code> — read it with
+  <code>KEY=$(cat ~/.config/biltiq_vllm_api_key)</code>. Localhost bind keeps it low-risk;
+  if you ever expose <code>:8202</code> on the LAN (<code>HOST=0.0.0.0</code>) treat it as a real secret.</div>
+</section>
+
+<section id="switch">
+  <h2>Roaming switchover</h2>
+  <p>Point your app's LLM config at the laptop instead of prod:</p>
+  <pre><code><span class="tok-k">CHAT</span>  base_url : http://localhost:8202/v1   key: $(cat ~/.config/biltiq_vllm_api_key)   model: qwen3.5-4b
+<span class="tok-k">EMBED</span> base_url : http://localhost:8204
+<span class="tok-k">RAG</span>   base_url : http://localhost:8205        (ingest, then query — orchestrates the rest)</code></pre>
+  <p class="muted">BiltIQ's router already resolves chat/tools to <code>:8202</code> via
+  <code>.claude/settings.local.json</code> while roaming.</p>
+</section>
+
+<section id="qwen">
+  <h2>Qwen — chat + tools <span class="port">:8202</span></h2>
+  <p class="muted">Bearer auth. Thinking is <strong>off</strong> by default; opt in per request.</p>
+
+  <h3>Plain chat</h3>
+  <pre><button class="copy">copy</button><code>KEY=$(cat ~/.config/biltiq_vllm_api_key)
+<span class="tok-c">curl</span> -s http://localhost:8202/v1/chat/completions \
+  -H <span class="tok-s">"Content-Type: application/json"</span> -H <span class="tok-s">"Authorization: Bearer $KEY"</span> -d <span class="tok-s">'{
+    "model":"qwen3.5-4b",
+    "messages":[{"role":"user","content":"List the first 6 primes."}],
+    "temperature":0,"max_tokens":80,
+    "chat_template_kwargs":{"enable_thinking":false}
+  }'</span></code></pre>
+  <ul><li><code>enable_thinking</code>: <code>false</code> → crisp answer; <code>true</code> → reasoning trace first.</li></ul>
+
+  <h3>Tool calling</h3>
+  <pre><button class="copy">copy</button><code><span class="tok-c">curl</span> -s http://localhost:8202/v1/chat/completions \
+  -H <span class="tok-s">"Content-Type: application/json"</span> -H <span class="tok-s">"Authorization: Bearer $KEY"</span> -d <span class="tok-s">'{
+    "model":"qwen3.5-4b",
+    "messages":[{"role":"user","content":"Weather in Mumbai in celsius? Call the tool."}],
+    "tools":[{"type":"function","function":{
+      "name":"get_weather",
+      "parameters":{"type":"object",
+        "properties":{"city":{"type":"string"},"unit":{"type":"string"}},
+        "required":["city"]}}}],
+    "tool_choice":"auto"
+  }'</span>
+<span class="muted"># -> finish_reason "tool_calls", arguments {"city":"Mumbai","unit":"celsius"}</span></code></pre>
+
+  <h3>Health / models</h3>
+  <pre><button class="copy">copy</button><code><span class="tok-c">curl</span> -s http://localhost:8202/health                                   <span class="muted"># no auth</span>
+<span class="tok-c">curl</span> -s http://localhost:8202/v1/models -H <span class="tok-s">"Authorization: Bearer $KEY"</span></code></pre>
+</section>
+
+<section id="embed">
+  <h2>Embeddings + Rerank <span class="port">:8204</span></h2>
+  <p class="muted">No auth. 384-dim, multilingual (e5-small + bge-reranker-v2-m3), CPU.</p>
+
+  <h3>/v1/embeddings (OpenAI-compatible)</h3>
+  <pre><button class="copy">copy</button><code><span class="tok-c">curl</span> -s http://localhost:8204/v1/embeddings -H <span class="tok-s">'Content-Type: application/json'</span> \
+  -d <span class="tok-s">'{"input":["Manthan runs native vLLM","नमस्ते दुनिया"],"input_type":"passage"}'</span></code></pre>
+  <ul><li><code>input</code>: string or array. <code>input_type</code>: <code>passage</code> (docs) | <code>query</code> (search) — sets the e5 prefix.</li></ul>
+
+  <h3>/rerank (cross-encoder)</h3>
+  <pre><button class="copy">copy</button><code><span class="tok-c">curl</span> -s http://localhost:8204/rerank -H <span class="tok-s">'Content-Type: application/json'</span> \
+  -d <span class="tok-s">'{"query":"capital of France","documents":["bananas are yellow","Paris is the capital"],"top_n":2}'</span></code></pre>
+  <ul><li><code>top_n</code>: 0 = all, ranked. Returns <code>results[]</code> with <code>index</code> + <code>relevance_score</code> (0..1).</li></ul>
+</section>
+
+<section id="rag">
+  <h2>RAG orchestrator <span class="port">:8205</span></h2>
+  <p class="muted">No auth. Hybrid pipeline — <strong>BM25 + dense → RRF fuse → cross-encoder
+  rerank → Self-RAG gate → cited generation</strong> (ATC Manthan v2.0 retrieval spec,
+  laptop test models).</p>
+
+  <h3>Ingest</h3>
+  <pre><button class="copy">copy</button><code><span class="tok-c">curl</span> -s http://localhost:8205/rag/ingest -H <span class="tok-s">'Content-Type: application/json'</span> -d <span class="tok-s">'{
+  "documents":[
+    {"text":"Manthan runs native vLLM on port 8082 and does NOT use Docker.","source":"ops","id":"doc1"},
+    {"text":"Error code XR-4471 means the SeaweedFS volume server is unreachable.","source":"runbook"}
+  ],
+  "chunk_chars":900,"chunk_overlap":150
+}'</span></code></pre>
+
+  <h3>Query (retrieve → rerank → grounded, cited answer)</h3>
+  <pre><button class="copy">copy</button><code><span class="tok-c">curl</span> -s http://localhost:8205/rag/query -H <span class="tok-s">'Content-Type: application/json'</span> -d <span class="tok-s">'{
+  "query":"Does Manthan use Docker and what port?",
+  "mode":"hybrid","leg_topk":40,"rerank_top_n":8,"selfrag_min":0.10,
+  "generate":true,"max_tokens":256
+}'</span></code></pre>
+  <ul>
+    <li><code>mode</code>: <code>hybrid</code> (BM25+dense) | <code>dense</code> | <code>lexical</code>.</li>
+    <li><code>selfrag_min</code>: refuse if top rerank score &lt; this (0 disables). <code>generate:false</code> → ranked <code>sources</code> only.</li>
+    <li>Returns <code>{ sources[], gated, retrieval{dense,lexical,fused,top_score}, answer }</code>.</li>
+  </ul>
+  <pre><button class="copy">copy</button><code><span class="muted"># retrieval-only — exact codes/IDs land via the BM25 leg</span>
+<span class="tok-c">curl</span> -s http://localhost:8205/rag/query -H <span class="tok-s">'Content-Type: application/json'</span> \
+  -d <span class="tok-s">'{"query":"XR-4471","generate":false}'</span>
+
+<span class="tok-c">curl</span> -s http://localhost:8205/rag/reset -X POST     <span class="muted"># clear the index</span>
+<span class="tok-c">curl</span> -s http://localhost:8205/health</code></pre>
+</section>
+
+<section id="manage">
+  <h2>Managing the services (while roaming)</h2>
+  <pre><button class="copy">copy</button><code><span class="muted"># status / health of all three</span>
+systemctl --user status biltiq-qwen biltiq-embed biltiq-rag
+<span class="tok-c">for</span> p <span class="tok-c">in</span> 8202 8204 8205; <span class="tok-c">do</span> curl -s -o /dev/null -w <span class="tok-s">":$p %{http_code}\n"</span> http://localhost:$p/health; <span class="tok-c">done</span>
+
+<span class="muted"># start / restart  (Qwen init ~4.5 min; embed ~10 s; rag instant)</span>
+systemctl --user start   biltiq-embed biltiq-rag biltiq-qwen
+systemctl --user restart biltiq-qwen
+
+<span class="muted"># logs</span>
+journalctl --user -u biltiq-rag -f</code></pre>
+  <ul>
+    <li>All three are <strong>enabled</strong> → auto-start on login. For start before login
+      (headless boot): run once <code>sudo loginctl enable-linger atc</code>.</li>
+    <li>Stopping a unit tears down its whole cgroup — no stranded GPU memory.</li>
+  </ul>
+  <div class="note"><strong>Optional / not in the default roaming set:</strong>
+    <code>:8201</code> gemma-4-E4B (W4A4, CPU embed offload + tools; weaker numerics) and
+    <code>:8203</code> llama.cpp CPU generator (not installed as a service — Qwen on GPU is
+    the generator). Start manually if needed.</div>
+</section>
+
+<footer>
+  BiltIQ AI · Laptop API · generated 2026-05-31 · source: <code>vllm-gemma4-patch/rag/laptop-api.html</code>
+</footer>
+</main>
+<script>
+  document.querySelectorAll('.copy').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var code = btn.parentElement.querySelector('code').innerText;
+      navigator.clipboard.writeText(code).then(function(){
+        var t = btn.textContent; btn.textContent = 'copied'; setTimeout(function(){btn.textContent=t;},1200);
+      });
+    });
+  });
+</script>
+</body>
+</html>
