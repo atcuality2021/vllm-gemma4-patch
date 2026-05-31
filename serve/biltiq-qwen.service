@@ -1,0 +1,23 @@
+[Unit]
+Description=BiltIQ Qwen3.5-4B (W4A16) + TurboQuant 3-bit KV — local OpenAI API on 127.0.0.1:8202
+Documentation=file:///home/atc/Desktop/vllm-gemma4-patch/serve/API.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+# TurboQuant 3-bit KV compression ON. Launch script reads the API key from
+# ~/.config/biltiq_vllm_api_key and binds localhost only.
+Environment=BILT_TURBOQUANT=1
+ExecStart=/bin/bash /home/atc/Desktop/.install-logs/launch_qwen_serve.sh
+# Qwen multimodal init takes ~4.5 min (flashinfer JIT autotune) — give it room.
+TimeoutStartSec=600
+Restart=on-failure
+RestartSec=15
+# KillMode=control-group (default) tears down the whole cgroup on stop/restart,
+# which kills the VLLM::EngineCore child too — no stranded ~7 GiB GPU orphan.
+KillMode=control-group
+KillSignal=SIGINT
+
+[Install]
+WantedBy=default.target
