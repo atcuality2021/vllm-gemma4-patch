@@ -199,7 +199,8 @@ def register() -> None:
                 pass
             weight = torch.nn.Parameter(host, requires_grad=False)
             set_weight_attrs(weight, {"input_dim": 1, "output_dim": 0,
-                                      "weight_loader": weight_loader})
+                                      "weight_loader": weight_loader,
+                                      "_cpu_offload": True})
             layer.register_parameter("weight", weight)
             _bind_cpu_forward(layer)
         else:
@@ -209,6 +210,29 @@ def register() -> None:
 
     UnquantizedEmbeddingMethod.create_weights = create_weights
     UnquantizedEmbeddingMethod._biltiq_cpu_offload = True
+
+    # Fix #2: stop process_weights_after_loading -> device_loading_context from
+    # dragging our CPU embedding back to the GPU (utils.py:144 p.data.to(cuda)).
+    from contextlib import contextmanager
+    from vllm.model_executor.model_loader import utils as _ld
+    if not getattr(_ld, "_biltiq_dlc_patched", False):
+        @contextmanager
+        def _dlc(module, target_device):
+            if target_device.type == "cpu":
+                yield module; return
+            original = {}
+            for name, p in module.named_parameters():
+                if p.device.type == "cpu" and not getattr(p, "_cpu_offload", False):
+                    original[name] = p.device
+                    p.data = p.data.to(target_device)
+            try:
+                yield module
+            finally:
+                for name, p in module.named_parameters():
+                    if name in original:
+                        p.data = p.data.to(original[name])
+        _ld.device_loading_context = _dlc
+        _ld._biltiq_dlc_patched = True
 
 
 def _bind_cpu_forward(layer) -> None:
